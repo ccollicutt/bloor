@@ -6,7 +6,7 @@ Currently it reads ZOOKEEPER_SERVERS from an environment variable, connects to e
 
 ```shell
 $ # assuming these are your zookeeper servers
-$ export ZOOKEEPER_SERVERS="192.168.0.2:2181,192.168.0.3:2181,192.168.4:2181"
+$ export ZOOKEEPER_SERVERS="192.168.0.2:2181,192.168.0.3:2181,192.168.0.4:2181"
 $ bloor
 2016/01/04 15:06:58 Bloor smoketest started (use -V for more logging)
 2016/01/04 15:06:58 Bloor run completed
