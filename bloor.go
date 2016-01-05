@@ -22,6 +22,8 @@ type bloorConfig struct {
 	rootZnode 		string
 	verbose       bool
 	acl						[]zk.ACL
+	rootFlags			int32
+	childFlags		int32
 }
 
 func getServerArray (serverList string) []string {
@@ -41,10 +43,6 @@ func setRootZnodeName (conf *bloorConfig, s string) {
 }
 
 func run(conf *bloorConfig) {
-
-	flags := int32(0)
-	// Children are ephemeral
-	childFlags := int32(zk.FlagEphemeral)
 
 	// Setup sessions/connections
 	conns := make([]*zk.Conn, len(conf.zkServers))
@@ -70,7 +68,7 @@ func run(conf *bloorConfig) {
 	} else {
 		rootZnodeContent := "bloor root znode"
 		_, err := conns[0].Create(conf.rootZnode, []byte(rootZnodeContent),
-			flags, conf.acl)
+			conf.rootFlags, conf.acl)
 		if err != nil {
 			log.Fatal(err)
 		} else {
@@ -104,7 +102,7 @@ func run(conf *bloorConfig) {
 
 		// Now create nodes
 		_, err = conn.Create(childZnode, []byte(childZnodeContent),
-			childFlags, conf.acl)
+			conf.childFlags, conf.acl)
 		if err != nil {
 			log.Fatal(err)
 		} else {
@@ -237,6 +235,9 @@ func main() {
 		conf := &bloorConfig{}
 		conf.verbose = verbose
 		conf.acl = zk.WorldACL(zk.PermAll)
+		conf.rootFlags = int32(0)
+		// Children are ephemeral
+		conf.childFlags = int32(zk.FlagEphemeral)
 		setRootZnodeName(conf, rootZnodeOption)
 
 		// Setup servers from environment variable or option
