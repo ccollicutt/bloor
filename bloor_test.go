@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+  "testing"
+  "fmt"
+)
 
 func StringArrayEquals(a []string, b []string) bool {
   if len(a) != len(b) {
@@ -49,5 +52,16 @@ func TestGetServerSingleArray(t *testing.T) {
   ok := StringArrayEquals(servers, serversExpected)
   if ok != true {
     t.Error("Server array is not the same as the serverExpected array")
+  }
+}
+
+func TestSetRootZnodeName(t *testing.T) {
+  rootZnodeOption := "someznode"
+  rootZnode := fmt.Sprintf("/%s", rootZnodeOption)
+  testConf := &bloorConfig{}
+  setRootZnodeName(testConf, rootZnodeOption)
+  if testConf.rootZnode != rootZnode {
+    t.Errorf("Expected root znode is %s but instead is %s", rootZnode,
+      testConf.rootZnode)
   }
 }

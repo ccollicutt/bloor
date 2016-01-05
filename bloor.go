@@ -1,8 +1,9 @@
 package main
 
-// NOTE(curtis): This is just a direct copy of
+// NOTE(curtis): Originally this was a golang copy of
 // https://github.com/phunt/zk-smoketest/blob/master/zk-smoketest.py
-// but written in go. Lots more to do, just wanted to try a direct copy.
+// Hopefully it's now improved and more go-idiomatic than the initial
+// checkin.
 
 import (
 	"fmt"
@@ -18,7 +19,7 @@ import (
 
 type bloorConfig struct {
 	zkServers 		[]string
-	rootZnodeName string
+	rootZnode 		string
 	verbose       bool
 }
 
@@ -30,14 +31,20 @@ func getServerArray (serverList string) []string {
 	return servers
 }
 
-func run(conf bloorConfig) {
+// FIXME: Should be better
+// This just adds a slash to the start of the rootznode option that comes from the
+// command line switch or default.
+func setRootZnodeName (conf *bloorConfig, s string) {
+	rootZnodeName := fmt.Sprintf("/%s", s)
+	conf.rootZnode = rootZnodeName
+}
+
+func run(conf *bloorConfig) {
 
 	acl := zk.WorldACL(zk.PermAll)
 	flags := int32(0)
 	// Children are ephemeral
 	childFlags := int32(zk.FlagEphemeral)
-	rootZnode := fmt.Sprintf("/%s", conf.rootZnodeName)
-
 
 	// Setup sessions/connections
 	conns := make([]*zk.Conn, len(conf.zkServers))
@@ -54,41 +61,41 @@ func run(conf bloorConfig) {
 
 	// Check if rootpath exists already on the first server.
 	// If not, create it.
-	exists, _, err := conns[0].Exists(rootZnode)
+	exists, _, err := conns[0].Exists(conf.rootZnode)
 	if err != nil {
 		log.Fatal(err)
 	}
 	if exists == true {
-		log.Printf("Root znode %s already exists, not creating", rootZnode)
+		log.Printf("Root znode %s already exists, not creating", conf.rootZnode)
 	} else {
 		rootZnodeContent := "bloor root znode"
-		_, err := conns[0].Create(rootZnode, []byte(rootZnodeContent),
+		_, err := conns[0].Create(conf.rootZnode, []byte(rootZnodeContent),
 			flags, acl)
 		if err != nil {
 			log.Fatal(err)
 		} else {
-			log.Printf("Created znode root %s", conf.rootZnodeName)
+			log.Printf("Created znode root %s", conf.rootZnode)
 		}
 	}
 
 	// Get children
-	children, _, err := conns[0].Children(rootZnode)
+	children, _, err := conns[0].Children(conf.rootZnode)
 	if err != nil {
 		log.Fatal(err)
 	}
 	if len(children) > 0 {
-		log.Fatalf("Children exist beneath root znode %s", rootZnode)
+		log.Fatalf("Children exist beneath root znode %s", conf.rootZnode)
 	} else {
-		log.Printf("Root znode %s has no children", rootZnode)
+		log.Printf("Root znode %s has no children", conf.rootZnode)
 	}
 
 	// Create child nodes
 	for i, conn := range conns {
-		childZnode := fmt.Sprintf("%s/session_%d", rootZnode, i)
+		childZnode := fmt.Sprintf("%s/session_%d", conf.rootZnode, i)
 		childZnodeContent := fmt.Sprintf("child-%d", i)
 
 		// First sync up
-		_, err := conn.Sync(rootZnode)
+		_, err := conn.Sync(conf.rootZnode)
 		if err != nil {
 			log.Fatal(err)
 		} else {
@@ -110,7 +117,7 @@ func run(conf bloorConfig) {
 	for i, conn := range conns {
 
 		// Sync up again
-		_, err := conn.Sync(rootZnode)
+		_, err := conn.Sync(conf.rootZnode)
 		if err != nil {
 			log.Fatal(err)
 		} else {
@@ -118,7 +125,7 @@ func run(conf bloorConfig) {
 		}
 
 		// Check if expected number of children
-		children, _, err := conn.Children(rootZnode)
+		children, _, err := conn.Children(conf.rootZnode)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -131,14 +138,14 @@ func run(conf bloorConfig) {
 		}
 
 		// Set watchers
-		snapshots, _, events, err := conn.ChildrenW(rootZnode)
+		snapshots, _, events, err := conn.ChildrenW(conf.rootZnode)
 		if err != nil {
 			log.Fatalf("Error setting up watch %s", err)
 		} else {
-			log.Printf("Set watcher on rootpath %s", rootZnode)
+			log.Printf("Set watcher on rootpath %s", conf.rootZnode)
 			// NOTE(curtis): Does this make sense?
 			for j, v := range snapshots {
-				log.Printf("Watching child %s/%s on session %d", rootZnode, v, j)
+				log.Printf("Watching child %s/%s on session %d", conf.rootZnode, v, j)
 			}
 			watchers[i] = events
 		}
@@ -146,14 +153,14 @@ func run(conf bloorConfig) {
 
 	// Delete the child znodes
 	for i, conn := range conns {
-		childZnode := fmt.Sprintf("%s/session_%d", rootZnode, i)
+		childZnode := fmt.Sprintf("%s/session_%d", conf.rootZnode, i)
 		conn.Delete(childZnode, -1)
 	}
 
 	// Check the watchers
 	for i, event := range watchers {
 		// Sync up
-		_, err := conns[i].Sync(rootZnode)
+		_, err := conns[i].Sync(conf.rootZnode)
 		if err != nil {
 			log.Fatal(err)
 		} else {
@@ -172,18 +179,18 @@ func run(conf bloorConfig) {
 	}
 
 	// Sync first session to delete
-	_, err = conns[0].Sync(rootZnode)
+	_, err = conns[0].Sync(conf.rootZnode)
 	if err != nil {
 		log.Fatal(err)
 	} else {
 		log.Printf("Synced first connection to delete rootpath")
 	}
 	// Delete rootpath/rootzode
-	err = conns[0].Delete(rootZnode, -1)
+	err = conns[0].Delete(conf.rootZnode, -1)
 	if err != nil {
 		log.Fatal(err)
 	} else {
-		log.Printf("Deleted rootpath %s", rootZnode)
+		log.Printf("Deleted rootpath %s", conf.rootZnode)
 	}
 
 	// Finally close all connections
@@ -197,10 +204,10 @@ func main() {
 
 	app := cli.NewApp()
 	app.Name = "bloor"
-	app.Version = "0.0.1"
-	app.Usage = "Zookeeper performance testing tool"
+	app.Version = "0.0.2"
+	app.Usage = "Zookeeper smoketest tool"
 
-	var rootZnodeName string
+	var rootZnodeOption string
 	var verbose bool
 	var zkServers string
 
@@ -215,7 +222,7 @@ func main() {
 			Name:        "znode-root, r",
 			Value:       "bloor-smoketest",
 			Usage:       "Root name of znode",
-			Destination: &rootZnodeName,
+			Destination: &rootZnodeOption,
 		},
 		cli.BoolFlag{
 			Name:        "verbose, V",
@@ -226,9 +233,10 @@ func main() {
 
 	app.Action = func(c *cli.Context) {
 
-		var conf bloorConfig
+		// Setup bloor config
+		conf := &bloorConfig{}
 		conf.verbose = verbose
-		conf.rootZnodeName = rootZnodeName
+		setRootZnodeName(conf, rootZnodeOption)
 
 		// Setup servers from environment variable or option
 		if zkServers != "" {
@@ -236,7 +244,11 @@ func main() {
 			conf.zkServers = getServerArray(zkServers)
 		} else {
 			zksStr := os.Getenv("ZOOKEEPER_SERVERS")
-			conf.zkServers = getServerArray(zksStr)
+			if zksStr != "" {
+				conf.zkServers = getServerArray(zksStr)
+			} else {
+				log.Fatal("ZOOKEEPER_SERVERS environment variable does not exist or is empty")
+			}
 		}
 
 		// Log to stdout to startup
