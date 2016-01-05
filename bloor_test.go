@@ -67,3 +67,7 @@ func TestSetRootZnodeName(t *testing.T) {
       testConf.rootZnode)
   }
 }
+
+func TestSetConns(t *testing.T) {
+    // FIXME: need to figure out how to do this
+}

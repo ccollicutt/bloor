@@ -24,6 +24,7 @@ type bloorConfig struct {
 	acl						[]zk.ACL
 	rootFlags			int32
 	childFlags		int32
+	conns 				[]*zk.Conn
 }
 
 func getServerArray (serverList string) []string {
@@ -42,10 +43,8 @@ func setRootZnodeName (conf *bloorConfig, s string) {
 	conf.rootZnode = rootZnodeName
 }
 
-func run(conf *bloorConfig) {
-
+func setConns (conf *bloorConfig) {
 	// Setup sessions/connections
-	conns := make([]*zk.Conn, len(conf.zkServers))
 	for i := range conf.zkServers {
 		// zk.Connect expects an array
 		s := make([]string, 1)
@@ -53,21 +52,27 @@ func run(conf *bloorConfig) {
 		conn, _, err := zk.Connect(s, time.Second)
 		if err != nil {
 			log.Fatal(err)
+		} else {
+			log.Printf("Connected to %d", i)
 		}
-		conns[i] = conn
+		conf.conns[i] = conn
 	}
+}
+
+func run(conf *bloorConfig) {
 
 	// Check if rootpath exists already on the first server.
 	// If not, create it.
-	exists, _, err := conns[0].Exists(conf.rootZnode)
+	exists, _, err := conf.conns[0].Exists(conf.rootZnode)
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	if exists == true {
 		log.Printf("Root znode %s already exists, not creating", conf.rootZnode)
 	} else {
 		rootZnodeContent := "bloor root znode"
-		_, err := conns[0].Create(conf.rootZnode, []byte(rootZnodeContent),
+		_, err := conf.conns[0].Create(conf.rootZnode, []byte(rootZnodeContent),
 			conf.rootFlags, conf.acl)
 		if err != nil {
 			log.Fatal(err)
@@ -77,7 +82,7 @@ func run(conf *bloorConfig) {
 	}
 
 	// Get children
-	children, _, err := conns[0].Children(conf.rootZnode)
+	children, _, err := conf.conns[0].Children(conf.rootZnode)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -88,7 +93,7 @@ func run(conf *bloorConfig) {
 	}
 
 	// Create child nodes
-	for i, conn := range conns {
+	for i, conn := range conf.conns {
 		childZnode := fmt.Sprintf("%s/session_%d", conf.rootZnode, i)
 		childZnodeContent := fmt.Sprintf("child-%d", i)
 
@@ -111,8 +116,8 @@ func run(conf *bloorConfig) {
 	}
 
 	// Sync all the servers, check children, setup watchers
-	watchers := make([]<-chan zk.Event, len(conns))
-	for i, conn := range conns {
+	watchers := make([]<-chan zk.Event, len(conf.conns))
+	for i, conn := range conf.conns {
 
 		// Sync up again
 		_, err := conn.Sync(conf.rootZnode)
@@ -127,12 +132,12 @@ func run(conf *bloorConfig) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		if len(children) != len(conns) {
+		if len(children) != len(conf.conns) {
 			log.Fatalf("Expected children: %d, found children: %d", len(children),
-				len(conns))
+				len(conf.conns))
 		} else {
 			log.Printf("Found correct number of children (%d) in connection %d",
-				len(conns), i)
+				len(conf.conns), i)
 		}
 
 		// Set watchers
@@ -150,7 +155,7 @@ func run(conf *bloorConfig) {
 	}
 
 	// Delete the child znodes
-	for i, conn := range conns {
+	for i, conn := range conf.conns {
 		childZnode := fmt.Sprintf("%s/session_%d", conf.rootZnode, i)
 		conn.Delete(childZnode, -1)
 	}
@@ -158,7 +163,7 @@ func run(conf *bloorConfig) {
 	// Check the watchers
 	for i, event := range watchers {
 		// Sync up
-		_, err := conns[i].Sync(conf.rootZnode)
+		_, err := conf.conns[i].Sync(conf.rootZnode)
 		if err != nil {
 			log.Fatal(err)
 		} else {
@@ -177,14 +182,14 @@ func run(conf *bloorConfig) {
 	}
 
 	// Sync first session to delete
-	_, err = conns[0].Sync(conf.rootZnode)
+	_, err = conf.conns[0].Sync(conf.rootZnode)
 	if err != nil {
 		log.Fatal(err)
 	} else {
 		log.Printf("Synced first connection to delete rootpath")
 	}
 	// Delete rootpath/rootzode
-	err = conns[0].Delete(conf.rootZnode, -1)
+	err = conf.conns[0].Delete(conf.rootZnode, -1)
 	if err != nil {
 		log.Fatal(err)
 	} else {
@@ -193,7 +198,7 @@ func run(conf *bloorConfig) {
 
 	// Finally close all connections
 	// FIXME: Could be defer?
-	for _, conn := range conns {
+	for _, conn := range conf.conns {
 		conn.Close()
 	}
 }
@@ -252,6 +257,11 @@ func main() {
 				log.Fatal("ZOOKEEPER_SERVERS environment variable does not exist or is empty")
 			}
 		}
+
+		// make connections
+		// FIXME: Is this correct in terms of creating the conns array in the bloorConfig?
+		conf.conns = make([]*zk.Conn, len(conf.zkServers))
+		setConns(conf)
 
 		// Log to stdout to startup
 		log.SetOutput(os.Stdout)
