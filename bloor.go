@@ -3,7 +3,7 @@ package main
 // NOTE(curtis): Originally this was a golang copy of
 // https://github.com/phunt/zk-smoketest/blob/master/zk-smoketest.py
 // Hopefully it's now improved and more go-idiomatic than the initial
-// checkin.
+// checkin. As usual lots more to do though. :)
 
 import (
 	"fmt"
@@ -21,6 +21,7 @@ type bloorConfig struct {
 	zkServers 		[]string
 	rootZnode 		string
 	verbose       bool
+	acl						[]zk.ACL
 }
 
 func getServerArray (serverList string) []string {
@@ -41,7 +42,6 @@ func setRootZnodeName (conf *bloorConfig, s string) {
 
 func run(conf *bloorConfig) {
 
-	acl := zk.WorldACL(zk.PermAll)
 	flags := int32(0)
 	// Children are ephemeral
 	childFlags := int32(zk.FlagEphemeral)
@@ -70,7 +70,7 @@ func run(conf *bloorConfig) {
 	} else {
 		rootZnodeContent := "bloor root znode"
 		_, err := conns[0].Create(conf.rootZnode, []byte(rootZnodeContent),
-			flags, acl)
+			flags, conf.acl)
 		if err != nil {
 			log.Fatal(err)
 		} else {
@@ -104,7 +104,7 @@ func run(conf *bloorConfig) {
 
 		// Now create nodes
 		_, err = conn.Create(childZnode, []byte(childZnodeContent),
-			childFlags, acl)
+			childFlags, conf.acl)
 		if err != nil {
 			log.Fatal(err)
 		} else {
@@ -236,6 +236,7 @@ func main() {
 		// Setup bloor config
 		conf := &bloorConfig{}
 		conf.verbose = verbose
+		conf.acl = zk.WorldACL(zk.PermAll)
 		setRootZnodeName(conf, rootZnodeOption)
 
 		// Setup servers from environment variable or option
