@@ -5,6 +5,8 @@ import (
   "fmt"
 )
 
+// Borrowed from
+// https://stackoverflow.com/questions/18561219/comparing-arrays-in-go-language
 func StringArrayEquals(a []string, b []string) bool {
   if len(a) != len(b) {
     return false
@@ -32,7 +34,7 @@ func TestGetServerMultiArray(t *testing.T) {
   }
 
   ok := StringArrayEquals(servers, serversExpected)
-  if ok != true {
+  if ok == false {
     t.Error("Server array is not the same as the serverExpected array")
   }
 }
