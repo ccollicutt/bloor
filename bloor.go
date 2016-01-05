@@ -17,38 +17,34 @@ import (
 )
 
 type bloorConfig struct {
+	zkServers 		[]string
 	rootZnodeName string
 	verbose       bool
 }
 
+func getServerArray (serverList string) []string {
+	servers := strings.Split(serverList, ",")
+	for i := 0; i < len(servers); i++ {
+		log.Printf("Server %d: %s", i, servers[i])
+	}
+	return servers
+}
+
 func run(conf bloorConfig) {
 
-	// First get the servers from the environment variable
-	zksStr := os.Getenv("ZOOKEEPER_SERVERS")
-	var servers []string
 	acl := zk.WorldACL(zk.PermAll)
 	flags := int32(0)
 	// Children are ephemeral
 	childFlags := int32(zk.FlagEphemeral)
 	rootZnode := fmt.Sprintf("/%s", conf.rootZnodeName)
 
-	// Split the server string into an array
-	if len(zksStr) == 0 {
-		log.Fatal("ZOOKEEPER_SERVERS environment variable is empty")
-	} else {
-		log.Printf("ZOOKEEPER_SERVERS: %s", zksStr)
-		servers = strings.Split(zksStr, ",")
-		for i := 0; i < len(servers); i++ {
-			log.Printf("Server %d: %s", i, servers[i])
-		}
-	}
 
 	// Setup sessions/connections
-	conns := make([]*zk.Conn, len(servers))
-	for i := range servers {
+	conns := make([]*zk.Conn, len(conf.zkServers))
+	for i := range conf.zkServers {
 		// zk.Connect expects an array
 		s := make([]string, 1)
-		s[0] = servers[i]
+		s[0] = conf.zkServers[i]
 		conn, _, err := zk.Connect(s, time.Second)
 		if err != nil {
 			log.Fatal(err)
@@ -206,8 +202,15 @@ func main() {
 
 	var rootZnodeName string
 	var verbose bool
+	var zkServers string
 
 	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:        "servers, s",
+			Value:       "",
+			Usage:       "list of servers",
+			Destination: &zkServers,
+			},
 		cli.StringFlag{
 			Name:        "znode-root, r",
 			Value:       "bloor-smoketest",
@@ -226,6 +229,15 @@ func main() {
 		var conf bloorConfig
 		conf.verbose = verbose
 		conf.rootZnodeName = rootZnodeName
+
+		// Setup servers from environment variable or option
+		if zkServers != "" {
+			// zkServers comes in as a string, but want array in conf
+			conf.zkServers = getServerArray(zkServers)
+		} else {
+			zksStr := os.Getenv("ZOOKEEPER_SERVERS")
+			conf.zkServers = getServerArray(zksStr)
+		}
 
 		// Log to stdout to startup
 		log.SetOutput(os.Stdout)
