@@ -1,3 +1,4 @@
 *.py
 zk-err-test.go
 bloor
+.git.old
