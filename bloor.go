@@ -13,206 +13,207 @@ import (
 )
 
 type bloorConfig struct {
-	zkServersStr string
-	zkServers    []string
-	rootZnode    string
-	verbose      bool
-	acl          []zk.ACL
-	rootFlags    int32
-	childFlags   int32
-	conns        []*zk.Conn
+	zkServers []zkServer
+	verbose   bool
+}
+
+type zkServer struct {
+	rootZnode  string
+	acl        []zk.ACL
+	rootFlags  int32
+	childFlags int32
+	server     string
+	conn       *zk.Conn
+	// No ideas!!!
+	watchers    <-chan zk.Event
+	numChildren int
 }
 
 func newBloorConfig() *bloorConfig {
 	conf := &bloorConfig{
-		zkServersStr: "127.0.0.1",
-		verbose:      false,
-		acl:          zk.WorldACL(zk.PermAll),
-		rootFlags:    int32(0),
-		childFlags:   int32(zk.FlagEphemeral),
-		rootZnode:    "/bloor-smoketest",
+		verbose: false,
 	}
 	return conf
 }
 
-func (conf *bloorConfig) setServerArray() {
-	conf.zkServers = strings.Split(conf.zkServersStr, ",")
-	for i, v := range conf.zkServers {
-		log.Printf("Server %d: %s", i, v)
+func newZkServer(name string, numZnodes int, rootZnodeOption string) *zkServer {
+	// zk.Connect expects an array
+	s := make([]string, 1)
+	s[0] = name
+	conn, _, err := zk.Connect(s, time.Second)
+	if err != nil {
+		log.Fatal(err)
+	} else {
+		log.Printf("Connected to %s", name)
 	}
+
+	server := &zkServer{
+		server:      name,
+		conn:        conn,
+		acl:         zk.WorldACL(zk.PermAll),
+		rootFlags:   int32(0),
+		childFlags:  int32(zk.FlagEphemeral),
+		rootZnode:   rootZnodeOption,
+		numChildren: numZnodes,
+	}
+	return server
 }
 
-func (conf *bloorConfig) setConns() {
-	// Setup sessions/connections
-	conf.conns = make([]*zk.Conn, len(conf.zkServers))
-	for i := range conf.zkServers {
-		// zk.Connect expects an array
-		s := make([]string, 1)
-		s[0] = conf.zkServers[i]
-		conn, _, err := zk.Connect(s, time.Second)
-		if err != nil {
-			log.Fatal(err)
-		} else {
-			log.Printf("Connected to %d", i)
-		}
-		conf.conns[i] = conn
+func setServerArray(zkServersStr string) []string {
+	serverArray := strings.Split(zkServersStr, ",")
+	for i, v := range serverArray {
+		log.Printf("Server %d: %s", i, v)
 	}
+	return serverArray
 }
 
 // FIXME: Should return something?
-func (conf *bloorConfig) createZkRootPath() {
+func (server *zkServer) createZkRootPath() {
 	// Check if rootpath exists already on the first server.
 	// If not, create it.
-	exists, _, err := conf.conns[0].Exists(conf.rootZnode)
+	exists, _, err := server.conn.Exists(server.rootZnode)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	if exists == true {
-		log.Printf("Root znode %s already exists, not creating", conf.rootZnode)
+		log.Printf("Root znode %s already exists, not creating", server.rootZnode)
 	} else {
 		rootZnodeContent := "bloor root znode"
-		_, err := conf.conns[0].Create(conf.rootZnode, []byte(rootZnodeContent),
-			conf.rootFlags, conf.acl)
+		_, err := server.conn.Create(server.rootZnode, []byte(rootZnodeContent),
+			server.rootFlags, server.acl)
 		if err != nil {
 			log.Fatal(err)
 		} else {
-			log.Printf("Created znode root %s", conf.rootZnode)
+			log.Printf("Created znode root %s", server.rootZnode)
 		}
 	}
 }
 
-func (conf *bloorConfig) checkForExistingChildren() bool {
+func (server *zkServer) checkForExistingChildren() bool {
 	// Get children
-	children, _, err := conf.conns[0].Children(conf.rootZnode)
+	children, _, err := server.conn.Children(server.rootZnode)
 	if err != nil {
 		log.Fatal(err)
 	}
 	if len(children) > 0 {
-		log.Printf("Children exist beneath root znode %s", conf.rootZnode)
+		log.Printf("Children exist beneath root znode %s", server.rootZnode)
 		return true
 	}
 
-	log.Printf("Root znode %s has no children", conf.rootZnode)
+	log.Printf("Root znode %s has no children", server.rootZnode)
 	return false
 }
 
-func (conf *bloorConfig) createChildNodes() {
-	// Sync
-	conf.syncConnections()
-	// Create child nodes
-	for i, conn := range conf.conns {
-		childZnode := fmt.Sprintf("%s/session_%d", conf.rootZnode, i)
-		childZnodeContent := fmt.Sprintf("child-%d", i)
-
-		// Now create nodes
-		_, err := conn.Create(childZnode, []byte(childZnodeContent),
-			conf.childFlags, conf.acl)
-		if err != nil {
-			log.Fatal(err)
-		} else {
-			log.Printf("Child znode %s was created", childZnode)
-		}
-	}
-}
-
-func (conf *bloorConfig) syncConnections() {
-	for _, conn := range conf.conns {
-		_, err := conn.Sync(conf.rootZnode)
-		if err != nil {
-			log.Fatal(err)
-		} else {
-			log.Printf("Synced connections")
-		}
-	}
-}
-
-// FIXME: What am I returning here?
-func getWatchers(conf *bloorConfig) []<-chan zk.Event {
-	// Sync all the servers, check children, setup watchers
-	watchers := make([]<-chan zk.Event, len(conf.conns))
-	conf.syncConnections()
-	for i, conn := range conf.conns {
-
-		// sync
-
-		// Check if expected number of children
-		children, _, err := conn.Children(conf.rootZnode)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if len(children) != len(conf.conns) {
-			log.Fatalf("Expected children: %d, found children: %d", len(children),
-				len(conf.conns))
-		} else {
-			log.Printf("Found correct number of children (%d) in connection %d",
-				len(conf.conns), i)
-		}
-
-		// Set watchers
-		snapshots, _, events, err := conn.ChildrenW(conf.rootZnode)
-		if err != nil {
-			log.Fatalf("Error setting up watch %s", err)
-		} else {
-			log.Printf("Set watcher on rootpath %s", conf.rootZnode)
-			// NOTE(curtis): Does this make sense?
-			for j, v := range snapshots {
-				log.Printf("Watching child %s/%s on session %d", conf.rootZnode, v, j)
-			}
-			watchers[i] = events
-		}
-	}
-	return watchers
-}
-
-func (conf *bloorConfig) deleteChildNodes() {
-	// Delete the child znodes
-	for i, conn := range conf.conns {
-		childZnode := fmt.Sprintf("%s/session_%d", conf.rootZnode, i)
-		conn.Delete(childZnode, -1)
-	}
-}
-
-func checkWatchers(conf *bloorConfig, watchers []<-chan zk.Event) {
-	// Check the watchers
-	for i, event := range watchers {
-		// Sync up
-		_, err := conf.conns[i].Sync(conf.rootZnode)
-		if err != nil {
-			log.Fatal(err)
-		} else {
-			log.Printf("Synced connection %d", i)
-		}
-
-		log.Printf("Length of event channel for session %d is %d", i, len(event))
-
-		// Check how many waches fired
-		if len(event) != 1 {
-			log.Fatalf("Watcher for session %d missed event", i)
-		}
-		msg := <-event
-		log.Printf("Event type %s occured on path %s with session %d",
-			zk.EventType(msg.Type), msg.Path, i)
-	}
-}
-
-func (conf *bloorConfig) deleteRootPath() {
-	// Sync first session to delete
-	conf.syncConnections()
-	// Delete rootpath/rootzode
-	err := conf.conns[0].Delete(conf.rootZnode, -1)
+func (server *zkServer) syncConnection() {
+	_, err := server.conn.Sync(server.rootZnode)
 	if err != nil {
 		log.Fatal(err)
 	} else {
-		log.Printf("Deleted rootpath %s", conf.rootZnode)
+		log.Printf("Synced connections")
 	}
 }
 
-func (conf *bloorConfig) closeConnections() {
-	// Finally close all connections
-	// FIXME: Could be defer?
-	for _, conn := range conf.conns {
-		conn.Close()
+func (server *zkServer) createChildNode() {
+	// Create child nodes
+	childZnode := fmt.Sprintf("%s/child-", server.rootZnode)
+	childZnodeContent := fmt.Sprintf("child-%s", server.server)
+
+	// First sync up
+	_, err := server.conn.Sync(server.rootZnode)
+	if err != nil {
+		log.Fatal(err)
+	} else {
+		log.Printf("Synced connection %s", server.server)
+	}
+
+	// Now create nodes
+	child, err := server.conn.CreateProtectedEphemeralSequential(childZnode,
+		[]byte(childZnodeContent), server.acl)
+	if err != nil {
+		log.Fatal(err)
+	} else {
+		log.Printf("Child znode %s was created", child)
+	}
+}
+
+func (server *zkServer) setWatchers() {
+	// Sync all the server, check children, setup watchers
+	server.syncConnection()
+
+	// Set watchers
+	snapshots, _, events, err := server.conn.ChildrenW(server.rootZnode)
+	if err != nil {
+		log.Fatalf("Error setting up watch %s", err)
+	} else {
+		log.Printf("Set watcher on rootpath %s", server.rootZnode)
+		// NOTE(curtis): Does this make sense?
+		for _, child := range snapshots {
+			log.Printf("Watching child %s/%s", server.rootZnode, child)
+		}
+		// No idea what is going on here!!!
+		server.watchers = events
+	}
+}
+
+// Delete all the child nodes for the server?
+func (server *zkServer) deleteChildNodes() {
+	children, _, err := server.conn.Children(server.rootZnode)
+	if err != nil {
+		log.Fatalf("Failed to get children on session %s", server.server)
+	}
+
+	if len(children) == 0 {
+		log.Printf("Session %s has no children", server.server)
+	}
+
+	for _, child := range children {
+		childPath := fmt.Sprintf("%s/%s", server.rootZnode, child)
+		err := server.conn.Delete(childPath, -1)
+		if err != nil {
+			log.Fatalf("Failed to delete %s on session %s with error %s",
+				childPath, server.server, err)
+		} else {
+			log.Printf("Deleted child %s on session %s", childPath, server.server)
+		}
+	}
+}
+
+func (server *zkServer) checkWatchers() {
+	// Sync connection
+	_, err := server.conn.Sync(server.rootZnode)
+	if err != nil {
+		log.Fatal(err)
+	} else {
+		log.Printf("Synced connection %s", server.server)
+	}
+
+	//FIXME: Need to work on channels, we should be checkign how many events fired
+	// and that it should be the same, I believe, as the number of deleted
+	// children per session.
+	i := 0
+	for msg := range server.watchers {
+		log.Printf("Event type %s occured on path %s with session %s",
+			zk.EventType(msg.Type), msg.Path, server.server)
+		i++
+	}
+	if i < 1 {
+		log.Fatalf("Was expecting at least 1 watcher event")
+	} else {
+		log.Printf("Found at least 1 watcher event")
+	}
+
+}
+
+func (server zkServer) deleteRootPath() {
+	// Sync first session to delete
+	server.syncConnection()
+	// Delete rootpath/rootzode
+	err := server.conn.Delete(server.rootZnode, -1)
+	if err != nil {
+		log.Fatal(err)
+	} else {
+		log.Printf("Deleted rootpath %s", server.rootZnode)
 	}
 }
 
@@ -220,14 +221,21 @@ func main() {
 
 	app := cli.NewApp()
 	app.Name = "bloor"
-	app.Version = "0.0.3"
+	app.Version = "0.0.4"
 	app.Usage = "Zookeeper smoketest tool"
 
 	var rootZnodeOption string
 	var verbose bool
 	var zkServersOption string
+	var numZnodesOption int
 
 	app.Flags = []cli.Flag{
+		cli.IntFlag{
+			Name:        "znodes, z",
+			Value:       1,
+			Usage:       "number of znode children to create on each server",
+			Destination: &numZnodesOption,
+		},
 		cli.StringFlag{
 			Name:        "servers, s",
 			Value:       "",
@@ -268,49 +276,48 @@ func main() {
 		// to do it...
 		if rootZnodeOption != "" {
 			hasSlash := strings.HasPrefix(rootZnodeOption, "/")
-			if hasSlash {
-				conf.rootZnode = rootZnodeOption
-			} else {
-				// Add slash to front of string
-				conf.rootZnode = fmt.Sprintf("/%s", rootZnodeOption)
+			if hasSlash == false {
+				rootZnodeOption = fmt.Sprintf("/%s", rootZnodeOption)
 			}
 		}
 
-		// Setup servers from environment variable or option
-		if zkServersOption != "" {
-			// zkServers comes in as a string, but want array in conf
-			conf.zkServersStr = zkServersOption
-		} else {
-			zkServersEnvironment := os.Getenv("ZOOKEEPER_SERVERS")
-			if zkServersEnvironment != "" {
-				conf.zkServersStr = zkServersEnvironment
-			} else {
+		// If not set by -s then get from environment variable
+		if zkServersOption == "" {
+			zkServersOption = os.Getenv("ZOOKEEPER_SERVERS")
+			if zkServersOption == "" {
 				log.Fatal("ZOOKEEPER_SERVERS environment variable does not exist or is empty")
 			}
 		}
 
 		// Now that we have set the server string, we can create the array
-		conf.setServerArray()
+		zkServersArray := setServerArray(zkServersOption)
+		conf.zkServers = make([]zkServer, len(zkServersArray))
 
 		// make connections
 		// NOTE(curtis): I'd like to set this when newBloorConfig is runn but don't
 		// know how many servers there are until it's set.
-		conf.setConns()
+		for i, s := range zkServersArray {
+			server := newZkServer(s, numZnodesOption, rootZnodeOption)
+			conf.zkServers[i] = *server
+		}
 
-		// Do the work
-		conf.createZkRootPath()
-
-		// See if root has existing children
-		existing := conf.checkForExistingChildren()
+		// Create the rootpath on the first server
+		conf.zkServers[0].createZkRootPath()
+		existing := conf.zkServers[0].checkForExistingChildren()
 		if existing {
 			log.Fatalf("Existing children, exiting")
 		}
-		conf.createChildNodes()
-		watchers := getWatchers(conf)
-		conf.deleteChildNodes()
-		checkWatchers(conf, watchers)
-		conf.deleteRootPath()
-		conf.closeConnections()
+
+		// Actually run smoketest
+		smoketest(conf)
+
+		// Delete rootpath via first server
+		conf.zkServers[0].deleteRootPath()
+
+		// Close connections
+		for _, s := range conf.zkServers {
+			s.conn.Close()
+		}
 
 		// Back to normal logging
 		log.SetOutput(os.Stdout)
